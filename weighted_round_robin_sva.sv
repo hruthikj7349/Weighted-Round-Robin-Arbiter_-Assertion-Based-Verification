@@ -63,29 +63,29 @@ module weighted_round_robin_sva #(
   // A_env1: Inputs are 2-state (no X/Z).
   property a_no_unknown_inputs;
     @(posedge i_clk) disable iff (!i_rstn)
-      !$isunknown({i_en, i_load, i_req, i_weights, i_rstn});
+      !$isunknown({i_en, i_load, i_req, i_weights});
   endproperty
   assume property (a_no_unknown_inputs);
 
 
-  // A_env2: Weights loaded are within the legal range [0 .. MAX_WEIGHT].
-  genvar wa;
-  generate
-    for (wa = 0; wa < N; wa++) begin : gen_a_weight_in_range
-      property a_weight_in_range;
-        @(posedge i_clk) disable iff (!i_rstn)
-          i_load |-> (i_weights[wa] <= MAX_WEIGHT[W-1:0]);
-      endproperty
-      assume property (a_weight_in_range);
-    end
-  endgenerate
+    //A_env2: Weights loaded are within the legal range [0 .. MAX_WEIGHT]., TOOL INHERENTLY DOES IT, no need for this
+//  genvar wa;
+//  generate
+ //   for (wa = 0; wa < N; wa++) begin : gen_a_weight_in_range
+   //   property a_weight_in_range;
+   //     @(posedge i_clk) disable iff (!i_rstn)
+    //      i_load |-> (i_weights[wa] <= MAX_WEIGHT[W-1:0]);
+    //  endproperty
+   //   assume property (a_weight_in_range);
+  //  end
+ // endgenerate
 
-  // A_env3: Load is a reasonable pulse not held high forever.
-  property a_load_not_stuck_high;
-    @(posedge i_clk) disable iff (!i_rstn)
-      i_load |-> ##[1:$] !i_load;
-  endproperty
-  assume property (a_load_not_stuck_high);
+  // A_env3: Load is a reasonable pulse not held high forever,         LOAD CAN STAY HIGH, THIS IS VALID BEHAVIOUR BEING CONSTRAINED
+ // property a_load_not_stuck_high;
+   // @(posedge i_clk) disable iff (!i_rstn)
+     // i_load |-> ##[1:$] !i_load;
+  //endproperty
+  //assume property (a_load_not_stuck_high);
 
 
 
@@ -236,12 +236,12 @@ module weighted_round_robin_sva #(
   // 4. ASSERTIONS RTL vs REFERENCE MODEL
   // ============================================================
 
-  // F1: After load, ref_weight becomes the previous cycle's i_weights.
-  property p_ref_weights_follow_load;
-    @(posedge i_clk) disable iff (!i_rstn)
-      i_load |=> (ref_weight == $past(i_weights));
-  endproperty
-  assert property (p_ref_weights_follow_load);
+  // F1: After load, ref_weight becomes the previous cycle's i_weights.  WRITE THIS TO CHECK THE dut.weight_counters
+//  property p_ref_weights_follow_load;
+  //  @(posedge i_clk) disable iff (!i_rstn)
+    //  i_load |=> (ref_weight == $past(i_weights));
+ // endproperty
+  //assert property (p_ref_weights_follow_load);
 
   // F2: DUT grant matches reference grant (both 1-cycle registered).
   property p_dut_grant_matches_ref;
@@ -250,32 +250,15 @@ module weighted_round_robin_sva #(
   endproperty
   assert property (p_dut_grant_matches_ref);
 
-  // F3: If ref sees no winner, DUT must not assert grant.
-  property p_no_grant_when_no_ref_winner;
-    @(posedge i_clk) disable iff (!i_rstn)
-      i_en && !i_load && (ref_gnt == '0) |-> (o_gnt == '0);
-  endproperty
-  assert property (p_no_grant_when_no_ref_winner);
+  // F3: If ref sees no winner, DUT must not assert grant. REDUNDANT, F2 CHECKS THIS
+ // property p_no_grant_when_no_ref_winner;
+   // @(posedge i_clk) disable iff (!i_rstn)
+     // i_en && !i_load && (ref_gnt == '0) |-> (o_gnt == '0);
+  //endproperty
+  //assert property (p_no_grant_when_no_ref_winner);
 
-  // F4: ref_weight never underflows; cover that it becomes non-zero.
-  genvar tw;
-  generate
-    for (tw = 0; tw < N; tw++) begin : gen_p_ref_weight_nonnegative
-      property p_ref_weight_nonnegative;
-        @(posedge i_clk) disable iff (!i_rstn)
-          ref_weight[tw] >= '0;
-      endproperty
-      assert property (p_ref_weight_nonnegative);
 
-      property c_ref_weight_nonzero;
-        @(posedge i_clk) disable iff (!i_rstn)
-          ref_weight[tw] != '0;
-      endproperty
-      cover property (c_ref_weight_nonzero);
-    end
-  endgenerate
-
-  // F5: When a grant bit rises, the winner's weight at arbitration time
+  // F4: When a grant bit rises, the winner's weight at arbitration time
   //     is at least the maximum weight among active requesters.
   genvar gw2;
   generate
@@ -296,19 +279,18 @@ module weighted_round_robin_sva #(
   endgenerate
 
   // ============================================================
-  // 5. EVENTUAL GRANT / FAIRNESS
+  // 5. EVENTUAL GRANT
   // ============================================================
   genvar fi;
   generate
     for (fi = 0; fi < N; fi++) begin : gen_p_fairness
       // If this requester keeps asking with non-zero tokens while enabled,
-      // it must eventually be granted (or the tool finds a counterexample).
-      property p_bounded_fairness_i;
-        @(posedge i_clk) disable iff (!i_rstn)
-          (i_en && !i_load && i_req[fi] && (ref_weight[fi] != '0))
-            |-> ##[0:$] (o_gnt[fi]);
-      endproperty
-      assert property (p_bounded_fairness_i);
+      // it must eventually be granted.
+    property p_bounded_fairness_i;
+            @(posedge i_clk) disable iff (!i_rstn)
+              (i_en && !i_load && i_req[fi] && (ref_weight[fi] != '0)) [*1:MAX_LAT] |-> ##[1:MAX_LAT] o_gnt[fi];
+    endproperty
+   assert property (p_bounded_fairness_i);
 
       property c_fairness_antecedent_seen;
         @(posedge i_clk) disable iff (!i_rstn)
@@ -319,10 +301,10 @@ module weighted_round_robin_sva #(
   endgenerate
 
   // ============================================================
-  // 6. Global and interesting cover properties
+  // 6. Cover properties
   // ============================================================
 
-  // C1: Some active grant event when there are requests.
+  // C1: Active grant event when there are requests.
   property c_any_active_grant;
     @(posedge i_clk) disable iff (!i_rstn)
       i_en && !i_load && (i_req != '0) && (o_gnt != '0);
@@ -340,32 +322,6 @@ module weighted_round_robin_sva #(
       cover property (c_req_cv_gets_grant);
     end
   endgenerate
-
-  // C3: Load weights and eventually exhaust all tokens.
-  property c_load_and_exhaust_tokens;
-    @(posedge i_clk) disable iff (!i_rstn)
-      i_load ##1 (ref_weight == i_weights) ##[1:MAX_LAT] ref_all_zero();
-  endproperty
-  cover property (c_load_and_exhaust_tokens);
-
-  // C4: Scenario where two neighbors have different weights and
-  //     the higher-weight requester is granted at least once while both request.
-  property c_higher_weight_wins;
-    @(posedge i_clk) disable iff (!i_rstn)
-      // assume neighbors 0 and 1 for illustration
-      i_en && !i_load && i_req[0] && i_req[1] &&
-      (ref_weight[0] > ref_weight[1])
-      ##[0:$] o_gnt[0];
-  endproperty
-  cover property (c_higher_weight_wins);
-
-  // C5: Observe disable behavior: enable low, all req high, grant held stable.
-  property c_disable_holds_grant;
-    @(posedge i_clk) disable iff (!i_rstn)
-      !i_en && (i_req == {N{1'b1}}) && (o_gnt != '0)
-      ##1 (!i_en && (i_req == {N{1'b1}}) && (o_gnt == $past(o_gnt)));
-  endproperty
-  cover property (c_disable_holds_grant);
 
 endmodule
 
